@@ -89,6 +89,39 @@ app.post('/register', async (req, res) => {
 });
 
 
+// log in api
+app.post('/login', async (req, res) => {
+    const { mobileNumber, email, pin } = req.body;
+
+    const query = email ? { email } : { mobileNumber };
+
+    try {
+        const user = await userCollection.findOne(query);
+        
+        if (!user) {
+            return res.status(404).send('User not found');
+        }
+        
+        if (user.status !== 'approved') {
+            return res.status(403).send('User not approved');
+        }
+
+        const isPinValid = await bcrypt.compare(pin, user.pin);
+        if (!isPinValid) {
+            return res.status(403).send('Invalid PIN');
+        }
+
+        // Assuming you have user data to return and don't want to expose the pin
+        const { pin, ...userWithoutPin } = user;
+        
+        res.send(userWithoutPin);
+    } catch (err) {
+        console.error(err);
+        res.status(500).send('Error logging in');
+    }
+});
+
+
 
 
 
