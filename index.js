@@ -3,21 +3,32 @@ const jwt = require('jsonwebtoken');
 const cors = require('cors');
 const bcrypt = require('bcryptjs');
 const bodyParser = require('body-parser');
-const { MongoClient, ServerApiVersion } = require('mongodb');
+const { MongoClient, ObjectId, ServerApiVersion } = require('mongodb');
 require('dotenv').config();
-
 
 const app = express();
 const port = process.env.PORT || 5000;
 const secretKey = process.env.ACCESS_TOKEN_SECRET;
 
-
 app.use(cors());
 app.use(bodyParser.json());
 
+// Middleware to authenticate JWT
+const authenticateJWT = (req, res, next) => {
+    const token = req.header('Authorization')?.split(' ')[1];
 
-
-
+    if (token) {
+        jwt.verify(token, secretKey, (err, user) => {
+            if (err) {
+                return res.sendStatus(403);
+            }
+            req.user = user;
+            next();
+        });
+    } else {
+        res.sendStatus(401);
+    }
+};
 
 const uri = `mongodb+srv://${process.env.DB_USER}:${process.env.DB_PASS}@cluster0.zjwopdy.mongodb.net/?retryWrites=true&w=majority&appName=Cluster0`;
 
@@ -32,8 +43,7 @@ const client = new MongoClient(uri, {
 
 async function run() {
     try {
-        // Connect the client to the server	(optional starting in v4.7)
-        // await client.connect();
+        await client.connect();
 
         const userCollection = client.db('CashDB').collection('users');
 
@@ -88,6 +98,50 @@ async function run() {
             }
         });
 
+        app.get('/register', async (req, res) => {
+            const result = await userCollection.find().toArray();
+            res.send(result);
+        });
+
+        // send money api
+        app.post('/send-money', authenticateJWT, async (req, res) => {
+            const { senderId, receiverNumber, amount, pin, totalAmount } = req.body;
+
+            try {
+                // Find sender and receiver
+                const sender = await userCollection.findOne({ _id: new ObjectId(senderId) });
+                const receiver = await userCollection.findOne({ mobileNumber: receiverNumber });
+
+                if (!sender || !receiver) {
+                    return res.status(404).json({ success: false, message: 'Sender or receiver not found' });
+                }
+
+                // Verify sender's pin
+                const isPinValid = await bcrypt.compare(pin, sender.pin);
+                if (!isPinValid) {
+                    return res.status(403).json({ success: false, message: 'Invalid pin' });
+                }
+
+                // Check if sender has enough balance
+                if (sender.balance < totalAmount) {
+                    return res.status(400).json({ success: false, message: 'Insufficient balance' });
+                }
+
+                // Perform transaction
+                const updatedSender = await userCollection.updateOne(
+                    { _id: new ObjectId(senderId) },
+                    { $inc: { balance: -totalAmount } }
+                );
+                const updatedReceiver = await userCollection.updateOne(
+                    { mobileNumber: receiverNumber },
+                    { $inc: { balance: amount } }
+                );
+
+                res.json({ success: true, message: 'Transaction successful' });
+            } catch (err) {
+                res.status(500).json({ success: false, message: 'Server error', error: err.message });
+            }
+        });
 
         // log in api
         app.post('/login', async (req, res) => {
@@ -117,22 +171,18 @@ async function run() {
                 res.json({
                     token,
                     user: {
-                      id: user._id,
-                      name: user.name,
-                      email: user.email,
-                      mobileNumber: user.mobileNumber,
-                      role: user.role
+                        id: user._id,
+                        name: user.name,
+                        email: user.email,
+                        mobileNumber: user.mobileNumber,
+                        role: user.role
                     }
-                  });
+                });
             } catch (err) {
                 console.error('Error logging in:', err);
                 res.status(500).send('Error logging in');
             }
         });
-
-
-
-
 
         // Send a ping to confirm a successful connection
         await client.db("admin").command({ ping: 1 });
@@ -143,9 +193,6 @@ async function run() {
     }
 }
 run().catch(console.dir);
-
-
-
 
 app.get('/', (req, res) => {
     res.send('Cash Plus server is running.')
