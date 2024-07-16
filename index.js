@@ -23,125 +23,134 @@ const uri = `mongodb+srv://${process.env.DB_USER}:${process.env.DB_PASS}@cluster
 
 // Create a MongoClient with a MongoClientOptions object to set the Stable API version
 const client = new MongoClient(uri, {
-  serverApi: {
-    version: ServerApiVersion.v1,
-    strict: true,
-    deprecationErrors: true,
-  }
+    serverApi: {
+        version: ServerApiVersion.v1,
+        strict: true,
+        deprecationErrors: true,
+    }
 });
 
 async function run() {
-  try {
-    // Connect the client to the server	(optional starting in v4.7)
-    // await client.connect();
-
-    const userCollection = client.db('CashDB').collection('users');
-
-// user register api
-app.post('/register', async (req, res) => {
-    const { name, pin, mobileNumber, email, role } = req.body;
-
-    console.log("Received Data: ", req.body);
-
-    if (!name || !pin || !mobileNumber || !email || !role) {
-        return res.status(400).send('All fields are required');
-    }
-
     try {
-        // Check if the email already exists
-        const existingUserByEmail = await userCollection.findOne({ email });
-        const existingUserByMobileNum = await userCollection.findOne({ mobileNumber });
-        if (existingUserByEmail) {
-            return res.status(400).send('Email is already used, try a different one.');
-        }
-        if (existingUserByMobileNum) {
-            return res.status(400).send('Mobile number is already used, try a different one.');
-        }
+        // Connect the client to the server	(optional starting in v4.7)
+        // await client.connect();
 
-        // Hash the pin
-        const hashedPin = await bcrypt.hash(pin, 10);
+        const userCollection = client.db('CashDB').collection('users');
 
-        // Set the balance based on the role
-        let balance = 0;
-        if (role === 'User') {
-            balance = 40;
-        } else if (role === 'Agent') {
-            balance = 10000;
-        }
+        // user register api
+        app.post('/register', async (req, res) => {
+            const { name, pin, mobileNumber, email, role } = req.body;
 
-        const newUser = {
-            name,
-            pin: hashedPin,
-            mobileNumber,
-            email,
-            balance,
-            status: 'pending',
-            role
-        };
+            console.log("Received Data: ", req.body);
 
-        const result = await userCollection.insertOne(newUser);
-        res.status(201).send(result);
+            if (!name || !pin || !mobileNumber || !email || !role) {
+                return res.status(400).send('All fields are required');
+            }
 
-    } catch (err) {
-        console.error(err);
-        res.status(500).send('Error registering user');
+            try {
+                // Check if the email already exists
+                const existingUserByEmail = await userCollection.findOne({ email });
+                const existingUserByMobileNum = await userCollection.findOne({ mobileNumber });
+                if (existingUserByEmail) {
+                    return res.status(400).send('Email is already used, try a different one.');
+                }
+                if (existingUserByMobileNum) {
+                    return res.status(400).send('Mobile number is already used, try a different one.');
+                }
+
+                // Hash the pin
+                const hashedPin = await bcrypt.hash(pin, 10);
+
+                // Set the balance based on the role
+                let balance = 0;
+                if (role === 'User') {
+                    balance = 40;
+                } else if (role === 'Agent') {
+                    balance = 10000;
+                }
+
+                const newUser = {
+                    name,
+                    pin: hashedPin,
+                    mobileNumber,
+                    email,
+                    balance,
+                    status: 'pending',
+                    role
+                };
+
+                const result = await userCollection.insertOne(newUser);
+                res.status(201).send(result);
+
+            } catch (err) {
+                console.error(err);
+                res.status(500).send('Error registering user');
+            }
+        });
+
+
+        // log in api
+        app.post('/login', async (req, res) => {
+            const { mobileNumber, email, pin } = req.body;
+
+            const query = email ? { email } : { mobileNumber };
+
+            try {
+                const user = await userCollection.findOne(query);
+
+                if (!user) {
+                    return res.status(404).send('User not found');
+                }
+
+                if (user.status !== 'approved') {
+                    return res.status(403).send('User not approved');
+                }
+
+                const isPinValid = await bcrypt.compare(pin, user.pin);
+                if (!isPinValid) {
+                    return res.status(403).send('Invalid PIN');
+                }
+
+                // Generate JWT token
+                const token = jwt.sign({ id: user._id, role: user.role }, secretKey, { expiresIn: '1h' });
+
+                res.json({
+                    token,
+                    user: {
+                      id: user._id,
+                      name: user.name,
+                      email: user.email,
+                      mobileNumber: user.mobileNumber,
+                      role: user.role
+                    }
+                  });
+            } catch (err) {
+                console.error('Error logging in:', err);
+                res.status(500).send('Error logging in');
+            }
+        });
+
+
+
+
+
+        // Send a ping to confirm a successful connection
+        await client.db("admin").command({ ping: 1 });
+        console.log("Pinged your deployment. You successfully connected to MongoDB!");
+    } finally {
+        // Ensures that the client will close when you finish/error
+        // await client.close();
     }
-});
-
-
-// log in api
-app.post('/login', async (req, res) => {
-    const { mobileNumber, email, pin } = req.body;
-
-    const query = email ? { email } : { mobileNumber };
-
-    try {
-        const user = await userCollection.findOne(query);
-        
-        if (!user) {
-            return res.status(404).send('User not found');
-        }
-        
-        if (user.status !== 'approved') {
-            return res.status(403).send('User not approved');
-        }
-
-        const isPinValid = await bcrypt.compare(pin, user.pin);
-        if (!isPinValid) {
-            return res.status(403).send('Invalid PIN');
-        }
-
-        // Assuming you have user data to return and don't want to expose the pin
-        const { pin, ...userWithoutPin } = user;
-        
-        res.send(userWithoutPin);
-    } catch (err) {
-        console.error(err);
-        res.status(500).send('Error logging in');
-    }
-});
-
-
-
-
-
-    // Send a ping to confirm a successful connection
-    await client.db("admin").command({ ping: 1 });
-    console.log("Pinged your deployment. You successfully connected to MongoDB!");
-  } finally {
-    // Ensures that the client will close when you finish/error
-    // await client.close();
-  }
 }
 run().catch(console.dir);
 
 
 
 
-app.get('/', (req,res) =>{
+app.get('/', (req, res) => {
     res.send('Cash Plus server is running.')
 });
 
-app.listen(port, () =>{
+app.listen(port, () => {
     console.log(`Server is running on port:${port}`);
 });
